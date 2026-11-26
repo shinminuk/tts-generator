@@ -20,7 +20,8 @@ import urllib.request
 from version import APP_VERSION, GITHUB_REPO
 
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-ASSET_NAME = "TTS생성기.exe"
+# GitHub 릴리즈 자산 이름은 한글이 들어가면 업로드 중 깨질 수 있어 영문으로 고정한다.
+ASSET_NAME = "TTS_Generator.exe"
 
 
 def _version_tuple(v):
