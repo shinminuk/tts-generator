@@ -1,0 +1,9 @@
+.env
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+favorites.json
+manual_voices.json
+tts_output/
