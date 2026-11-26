@@ -773,6 +773,8 @@ class ProviderPanel:
             return
 
         voice_id = self.selected_voice["id"]
+        voice_label = self.selected_voice.get("label", "voice")
+        tempo_str = self.tempo_var.get().strip()
         audio_format = self.format_rev.get(self.format_var.get(), self.provider.default_format)
         outdir = self.outdir_var.get().strip() or "tts_output"
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -787,19 +789,21 @@ class ProviderPanel:
 
         self.run_button.configure(state="disabled", fg_color=MUTED)
         threading.Thread(
-            target=self.generate_worker, args=(lines, voice_id, tempo, audio_format, outdir, prompt),
+            target=self.generate_worker,
+            args=(lines, voice_id, voice_label, tempo, tempo_str, audio_format, outdir, prompt),
             daemon=True,
         ).start()
 
-    def generate_worker(self, lines, voice_id, tempo, audio_format, outdir, prompt):
+    def generate_worker(self, lines, voice_id, voice_label, tempo, tempo_str, audio_format, outdir, prompt):
         try:
             api_key = self.provider.load_api_key()
             if not api_key:
                 raise RuntimeError("API 키가 설정되지 않았습니다.")
             os.makedirs(outdir, exist_ok=True)
+            voice_name = safe_filename(voice_label, maxlen=20)
             used_names = set()
             for line in lines:
-                base = safe_filename(line)
+                base = f"{voice_name}_{tempo_str}_{safe_filename(line)}"
                 name = base
                 n = 2
                 while name in used_names:

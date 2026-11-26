@@ -26,6 +26,7 @@ DEFAULT_MODEL = "ssfm-v31"
 DEFAULT_LANGUAGE = "kor"
 DEFAULT_TEMPO = 1.0  # 기본 속도는 1.0으로 고정
 DEFAULT_FORMAT = "wav"
+DEFAULT_VOLUME = 150  # Typecast 기본값(100)이 너무 작게 들려서 올림 (0~200)
 
 
 def load_api_key():
@@ -93,7 +94,7 @@ def list_voices(search=None):
         print(f"{v.get('voice_id')}\t{eng}/{kor}\t{v.get('gender')}\t{v.get('age')}")
 
 
-def synthesize(api_key, text, voice_id, model, language, tempo, audio_format, out_path, prompt=None):
+def synthesize(api_key, text, voice_id, model, language, tempo, audio_format, out_path, prompt=None, volume=DEFAULT_VOLUME):
     body = {
         "voice_id": voice_id,
         "text": text,
@@ -102,6 +103,7 @@ def synthesize(api_key, text, voice_id, model, language, tempo, audio_format, ou
         "output": {
             "audio_tempo": tempo,
             "audio_format": audio_format,
+            "volume": volume,
         },
     }
     if prompt:
