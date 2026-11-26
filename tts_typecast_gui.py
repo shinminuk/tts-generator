@@ -4,9 +4,14 @@ TTS생성기 - 다중 TTS 서비스 통합 GUI (다크 + 그린, 둥근 카드 �
 타입캐스트 / 일레븐랩스 / 피쉬오디오 탭을 지원합니다.
 실행: python tts_typecast_gui.py
 """
+import ctypes
+import hashlib
 import json
 import os
+import tempfile
 import threading
+import urllib.error
+import urllib.request
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -25,6 +30,40 @@ def safe_filename(text, maxlen=20):
     cleaned = "".join(c for c in text.strip() if c not in INVALID_FILENAME_CHARS)
     cleaned = cleaned.strip()
     return cleaned[:maxlen] or "tts"
+
+
+PREVIEW_CACHE_DIR = os.path.join(app_dir(), "preview_cache")
+_PREVIEW_MCI_ALIAS = "ttsgen_preview"
+
+
+def _mci(command):
+    buf = ctypes.create_unicode_buffer(256)
+    ctypes.windll.winmm.mciSendStringW(command, buf, len(buf), None)
+    return buf.value
+
+
+def play_preview_audio(path):
+    """mp3/wav 미리듣기 재생 (ctypes + winmm, 추가 라이브러리 불필요)."""
+    _mci(f'close {_PREVIEW_MCI_ALIAS}')
+    ext = os.path.splitext(path)[1].lower()
+    mci_type = "mpegvideo" if ext == ".mp3" else "waveaudio"
+    _mci(f'open "{path}" type {mci_type} alias {_PREVIEW_MCI_ALIAS}')
+    _mci(f'play {_PREVIEW_MCI_ALIAS}')
+
+
+def download_preview_audio(url):
+    """미리듣기 파일을 캐시에 받아두고 로컬 경로를 돌려준다."""
+    os.makedirs(PREVIEW_CACHE_DIR, exist_ok=True)
+    ext = os.path.splitext(url.split("?")[0])[1] or ".mp3"
+    name = hashlib.sha1(url.encode("utf-8")).hexdigest() + ext
+    path = os.path.join(PREVIEW_CACHE_DIR, name)
+    if not os.path.exists(path):
+        req = urllib.request.Request(url, headers={"User-Agent": "tts-generator"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+        with open(path, "wb") as f:
+            f.write(data)
+    return path
 
 
 FAVORITES_PATH = os.path.join(app_dir(), "favorites.json")
@@ -135,7 +174,8 @@ class Provider:
 
     def __init__(self, key, has_categories, has_emotion, network_voices, formats,
                  default_format, default_tempo, load_api_key, save_api_key,
-                 fetch_voices, synthesize, voice_emotions=None, default_voice_id=None):
+                 fetch_voices, synthesize, voice_emotions=None, default_voice_id=None,
+                 preview_url=None):
         self.key = key
         self.has_categories = has_categories
         self.has_emotion = has_emotion
@@ -149,6 +189,7 @@ class Provider:
         self.synthesize = synthesize           # (api_key, text, voice_id, tempo, fmt, out_path, prompt)
         self.voice_emotions = voice_emotions or (lambda v: [])
         self.default_voice_id = default_voice_id
+        self.preview_url = preview_url or (lambda v: v.get("raw", {}).get("preview_url"))
 
 
 def _typecast_fetch_voices(api_key):
@@ -198,6 +239,11 @@ def _fish_synthesize(api_key, text, voice_id, tempo, audio_format, out_path, pro
     core_fish.synthesize(api_key, text, voice_id, audio_format, out_path)
 
 
+def _fish_preview_url(voice):
+    samples = voice.get("raw", {}).get("samples") or []
+    return samples[0].get("audio") if samples else None
+
+
 PROVIDERS = {
     "typecast": Provider(
         key="typecast", has_categories=True, has_emotion=True, network_voices=False,
@@ -220,6 +266,7 @@ PROVIDERS = {
         default_tempo=1.0,
         load_api_key=core_fish.load_api_key, save_api_key=core_fish.save_api_key,
         fetch_voices=_fish_fetch_voices, synthesize=_fish_synthesize,
+        preview_url=_fish_preview_url,
     ),
 }
 
@@ -340,7 +387,8 @@ class ApiKeyBar(ctk.CTkFrame):
 
 
 class VoiceRow(ctk.CTkFrame):
-    def __init__(self, parent, voice, is_favorite, on_click, on_toggle_favorite, on_remove_manual=None):
+    def __init__(self, parent, voice, is_favorite, on_click, on_toggle_favorite,
+                 on_remove_manual=None, on_preview=None):
         super().__init__(parent, fg_color=FIELD, corner_radius=10, height=VOICE_ROW_HEIGHT)
         self.voice = voice
         self.on_click = on_click
@@ -358,6 +406,13 @@ class VoiceRow(ctk.CTkFrame):
                 fg_color="transparent", hover_color=CARD_SOFT, text_color=MUTED,
                 font=f(8), corner_radius=8, command=lambda: on_remove_manual(voice),
             ).pack(side="right", padx=(0, 4))
+        if on_preview:
+            self.preview_btn = ctk.CTkButton(
+                self, text="▶", width=24, height=VOICE_ROW_HEIGHT - 6,
+                fg_color="transparent", hover_color=CARD_SOFT, text_color=ACCENT,
+                font=f(9), corner_radius=8, command=lambda: on_preview(voice),
+            )
+            self.preview_btn.pack(side="right", padx=(0, 4))
         self.label = ctk.CTkLabel(self, text=voice["label"], text_color=TEXT, font=f(8), anchor="w")
         self.label.pack(side="left", fill="both", expand=True, padx=(4, 10), pady=2)
         for widget in (self, self.label):
@@ -624,6 +679,20 @@ class ProviderPanel:
             return
         threading.Thread(target=self._fetch_voices_worker, args=(api_key,), daemon=True).start()
 
+    def play_preview(self, voice):
+        url = self.provider.preview_url(voice)
+        if not url:
+            messagebox.showinfo("미리듣기", "이 보이스는 미리듣기를 지원하지 않습니다.")
+            return
+        threading.Thread(target=self._play_preview_worker, args=(url,), daemon=True).start()
+
+    def _play_preview_worker(self, url):
+        try:
+            path = download_preview_audio(url)
+            play_preview_audio(path)
+        except Exception as e:
+            self.page.after(0, lambda: messagebox.showerror("미리듣기 오류", str(e)))
+
     def _fetch_voices_worker(self, api_key):
         try:
             voices = self.provider.fetch_voices(api_key)
@@ -720,7 +789,8 @@ class ProviderPanel:
         shown = result[:MAX_LIST_ROWS]
         for v in shown:
             row = VoiceRow(self.list_scroll, v, v["id"] in self.favorite_ids,
-                            self.set_selected_voice, self.toggle_favorite, self.remove_manual_voice)
+                            self.set_selected_voice, self.toggle_favorite, self.remove_manual_voice,
+                            on_preview=self.play_preview)
             row.pack(fill="x", pady=2)
             self.voice_rows.append(row)
 
@@ -806,7 +876,7 @@ class ProviderPanel:
                 base = f"{voice_name}_{tempo_str}_{safe_filename(line)}"
                 name = base
                 n = 2
-                while name in used_names:
+                while name in used_names or os.path.exists(os.path.join(outdir, f"{name}.{audio_format}")):
                     name = f"{base}_{n}"
                     n += 1
                 used_names.add(name)
