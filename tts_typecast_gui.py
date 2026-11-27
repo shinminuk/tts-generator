@@ -86,6 +86,26 @@ def save_favorites(data):
 
 FAVORITES = load_favorites()
 
+SETTINGS_PATH = os.path.join(app_dir(), "settings.json")
+
+
+def load_settings():
+    if not os.path.exists(SETTINGS_PATH):
+        return {}
+    try:
+        with open(SETTINGS_PATH, encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return {}
+
+
+def save_settings(data):
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as fp:
+        json.dump(data, fp, ensure_ascii=False, indent=2)
+
+
+SETTINGS = load_settings()
+
 MANUAL_VOICES_PATH = os.path.join(app_dir(), "manual_voices.json")
 
 
@@ -647,7 +667,10 @@ class ProviderPanel:
         outdir_row.pack(fill="x")
         ctk.CTkLabel(outdir_row, text="출력 폴더", text_color=TEXT, font=f(8)
                      ).pack(side="left", padx=(0, 8))
-        self.outdir_var = ctk.StringVar(value="tts_output")
+        self.outdir_var = ctk.StringVar(
+            value=SETTINGS.get("outdir", {}).get(self.provider.key, "tts_output")
+        )
+        self.outdir_var.trace_add("write", self._on_outdir_change)
         ctk.CTkEntry(outdir_row, textvariable=self.outdir_var, width=150, fg_color=FIELD,
                      text_color=TEXT, border_width=0, corner_radius=10,
                      font=f(8)).pack(side="left", padx=(0, 8))
@@ -829,6 +852,10 @@ class ProviderPanel:
             if self.emotion_var.get() not in emotion_labels:
                 self.emotion_var.set(EMOTION_KO["normal"])
 
+    def _on_outdir_change(self, *args):
+        SETTINGS.setdefault("outdir", {})[self.provider.key] = self.outdir_var.get().strip()
+        save_settings(SETTINGS)
+
     def pick_outdir(self):
         path = filedialog.askdirectory()
         if path:
@@ -840,6 +867,11 @@ class ProviderPanel:
         os.startfile(os.path.abspath(outdir))
 
     def start_generate(self):
+        # 한글 IME로 마지막 글자를 입력한 직후 커서를 옮기지 않고 바로 누르면
+        # 조합 중인 마지막 글자가 아직 위젯에 반영되지 않을 수 있어, 먼저
+        # 포커스를 옮겨 IME 조합을 확정시키고 대기 중인 이벤트를 처리한다.
+        self.text_box.focus_set()
+        self.text_box.update()
         text = self.text_box.get("1.0", "end").strip()
         if not text:
             messagebox.showwarning("입력 필요", "텍스트를 입력하세요.")
