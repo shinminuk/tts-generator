@@ -534,6 +534,7 @@ class ProviderPanel:
         )
         search_entry.pack(side="left")
         search_entry.bind("<Return>", lambda e: self.refresh_voice_list())
+        self.search_var.trace_add("write", lambda *a: self.refresh_voice_list())
         ctk.CTkButton(
             search_wrap, text="🔍", command=self.refresh_voice_list, width=30, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#06130a",
