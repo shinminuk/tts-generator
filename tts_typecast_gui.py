@@ -161,9 +161,13 @@ def _safe_load(loader):
         return ""
 
 
-def typecast_voice_label(v):
+def typecast_voice_name(v):
     name = v.get("voice_name", {})
-    label = name.get("kor") or name.get("eng") or v.get("voice_id")
+    return name.get("kor") or name.get("eng") or v.get("voice_id")
+
+
+def typecast_voice_label(v):
+    label = typecast_voice_name(v)
     age = core_typecast.AGE_LABELS.get(v.get("age"), v.get("age"))
     gender = core_typecast.GENDER_LABELS.get(v.get("gender"), v.get("gender"))
     return f"{label} · {age}/{gender}"
@@ -197,7 +201,7 @@ def _typecast_fetch_voices(api_key):
     out = []
     for v in voices:
         out.append({
-            "id": v.get("voice_id"), "label": typecast_voice_label(v),
+            "id": v.get("voice_id"), "label": typecast_voice_label(v), "name": typecast_voice_name(v),
             "age": v.get("age"), "gender": v.get("gender"), "raw": v,
         })
     return out
@@ -216,7 +220,8 @@ def _eleven_fetch_voices(api_key):
     voices = core_eleven.list_voices(api_key)
     out = []
     for v in voices:
-        out.append({"id": v.get("voice_id"), "label": v.get("name", v.get("voice_id")), "raw": v})
+        label = v.get("name", v.get("voice_id"))
+        out.append({"id": v.get("voice_id"), "label": label, "name": label, "raw": v})
     return out
 
 
@@ -228,10 +233,8 @@ def _fish_fetch_voices(api_key):
     voices = core_fish.list_voices(api_key)
     out = []
     for v in voices:
-        out.append({
-            "id": v.get("_id") or v.get("id"),
-            "label": v.get("title") or v.get("name") or "(이름 없음)", "raw": v,
-        })
+        label = v.get("title") or v.get("name") or "(이름 없음)"
+        out.append({"id": v.get("_id") or v.get("id"), "label": label, "name": label, "raw": v})
     return out
 
 
@@ -650,6 +653,9 @@ class ProviderPanel:
                      font=f(8)).pack(side="left", padx=(0, 8))
         ctk.CTkButton(outdir_row, text="폴더 선택", command=self.pick_outdir, width=70, height=26,
                       fg_color=FIELD, hover_color=CARD_SOFT, text_color=TEXT,
+                      corner_radius=10, font=f(7)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(outdir_row, text="폴더 열기", command=self.open_outdir, width=70, height=26,
+                      fg_color=FIELD, hover_color=CARD_SOFT, text_color=TEXT,
                       corner_radius=10, font=f(7)).pack(side="left")
 
     def step_tempo(self, delta):
@@ -828,6 +834,11 @@ class ProviderPanel:
         if path:
             self.outdir_var.set(path)
 
+    def open_outdir(self):
+        outdir = self.outdir_var.get().strip() or "tts_output"
+        os.makedirs(outdir, exist_ok=True)
+        os.startfile(os.path.abspath(outdir))
+
     def start_generate(self):
         text = self.text_box.get("1.0", "end").strip()
         if not text:
@@ -843,7 +854,7 @@ class ProviderPanel:
             return
 
         voice_id = self.selected_voice["id"]
-        voice_label = self.selected_voice.get("label", "voice")
+        voice_label = self.selected_voice.get("name") or self.selected_voice.get("label", "voice")
         tempo_str = self.tempo_var.get().strip()
         audio_format = self.format_rev.get(self.format_var.get(), self.provider.default_format)
         outdir = self.outdir_var.get().strip() or "tts_output"
